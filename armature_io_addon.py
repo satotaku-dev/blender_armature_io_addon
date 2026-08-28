@@ -31,9 +31,11 @@ class ArmatureIO(object):
         @param bones - optional list of bones to export. if empty it exports all bones in armature
         @param file_name - optional name for json file to save such as Armature.json. if it is not provided it uses the armature name
         """
-        if not os.path.isdir(export_dir) and not os.path.isfile(export_dir):
-            print("could not find export path %s. enter one that exists" % export_dir)
-            return
+        if not os.path.isdir(export_dir):
+            parent_dir = os.path.dirname(export_dir)
+            if not parent_dir or not os.path.isdir(parent_dir):
+                print("could not find export directory %s" % parent_dir)
+                return False
             
         if not armature in bpy.data.objects:
             print("requires an armature name. the data object name to exist")
@@ -52,9 +54,8 @@ class ArmatureIO(object):
         
         for bone in bone_names:
             edit_bone_data = {}
-            pose_bone_data = {}
             
-            # edit bone data
+            # edit bone data (rest position / T-pose only)
             # need to be in edit mode for getting parent - assumes armature is selected
             bpy.ops.object.mode_set(mode='EDIT')
             eb = bpy.data.objects[armature].data.edit_bones[bone]
@@ -66,59 +67,48 @@ class ArmatureIO(object):
             edit_bone_data['parent'] = eb.parent.name if eb.parent else ''
             ##
             
-            # pose bone data
-            bpy.ops.object.mode_set(mode='POSE')
-            pb = bpy.data.objects[armature].pose.bones[bone]
+            # NOTE: pose_bone_data (location/rotation/scale/custom_shape) is
+            # intentionally NOT exported. This addon only stores the rest
+            # position (T-pose) and hierarchy of the armature. Exporting and
+            # re-applying pose transforms on import could distort the rest
+            # armature into a posed/deformed shape on re-import.
             
-            # adding pose bone attributes here
-            pose_bone_data['location'] = tuple(pb.location)  # (4,5,6)
-            pose_bone_data['scale'] = tuple(pb.scale)
-            pose_bone_data['rotation_mode'] = pb.rotation_mode
-            pose_bone_data['rotation'] = tuple(pb.rotation_euler)
-            if pb.rotation_mode == 'QUATERNION':
-                pose_bone_data['rotation'] = tuple(pb.rotation_quaternion)
-            pose_bone_data['custom_shape'] = pb.custom_shape.name if pb.custom_shape else ''  # animator curve for bone
-            pose_bone_data['custom_shape_scale'] = pb.custom_shape_scale
-            ##
-            
-            dat_dict[bone] = {'edit_bone_data': edit_bone_data, 'pose_bone_data': pose_bone_data}
+            dat_dict[bone] = {'edit_bone_data': edit_bone_data}
         
         # exporting armature to json
         ##
         # if directory provided is a full path to a file name use it
         export_fullpath = ''
-        if os.path.isfile(export_dir):
-            export_fullpath = export_dir
-        else:
-            # use the file_name if it exists
-            export_file_name = ''
-            if file_name:
-                export_file_name = file_name
-            else:
-                # use the armature name to figure out file name
-                armature_edit = armature.replace(' ', '_')
-                export_file_name = armature_edit + '.json'
-                
-            export_fullpath = os.path.join(export_dir, export_file_name)
-        
-        ##
-        outDir = os.path.dirname(export_fullpath)
-        if not os.path.exists(outDir):
-            print('Requires an out directory that exists to write armature file %s' % outDir)
-            return
-        ##
-        
-        ## adding armature name
-        output_dict = {}
-        output_dict["armature"] = armature
-        output_dict["bones"] = dat_dict
-        ##
-        
-        print("exporting >>> %s to file name: %s" % (output_dict, export_fullpath))
-        
-        with open(export_fullpath, "w") as outf:
-            json.dump(output_dict, outf, indent=4)
+        # Exporting armature to JSON
 
+        export_fullpath = os.path.abspath(export_dir)
+
+        # Ensure .json extension
+        if not export_fullpath.lower().endswith(".json"):
+            export_fullpath += ".json"
+
+        # Check export directory
+        out_dir = os.path.dirname(export_fullpath)
+
+        if not os.path.isdir(out_dir):
+            print("Export directory does not exist: %s" % out_dir)
+            return False
+
+        output_dict = {
+            "armature": armature,
+            "bones": dat_dict
+        }
+
+        print("Exporting armature to: %s" % export_fullpath)
+
+        try:
+            with open(export_fullpath, "w") as outf:
+                json.dump(output_dict, outf, indent=4)
+        except Exception as e:
+            print("Failed to write JSON: %s" % e)
+            return False
+
+        print("Armature exported successfully!")
         return True
         
     def _importMakeArmature(self, armatureName):
@@ -203,13 +193,9 @@ class ArmatureIO(object):
             tail = edit_bone_data.get('tail') or None
             roll = edit_bone_data.get('roll') or 0.0
             
-            pose_bone_data = dat.get('pose_bone_data') or None
-            location = pose_bone_data.get('location') or None
-            scale = pose_bone_data.get('scale') or None
-            rotation_mode = pose_bone_data.get('rotation_mode') or None
-            rotation = pose_bone_data.get('rotation') or None
-            custom_shape = pose_bone_data.get('custom_shape') or ''
-            custom_shape_scale = pose_bone_data.get('custom_shape_scale') or 1.0
+            # NOTE: pose_bone_data is intentionally ignored on import, even
+            # if present in an older JSON file. This addon only rebuilds the
+            # rest position (T-pose) of the armature, never the pose.
             
             bpy.ops.object.mode_set(mode='EDIT', toggle=False)
             bone_obj = None
@@ -220,26 +206,10 @@ class ArmatureIO(object):
                 # make edit bone from scratch
                 bone_obj = bpy.data.objects[armature].data.edit_bones.new(bone)
                 
-            # position edit bone
+            # position edit bone (rest position only)
             bone_obj.head = head
             bone_obj.tail = tail
             bone_obj.roll = roll
-            
-            # position pose bone
-            bpy.ops.object.mode_set(mode='POSE')
-            pb = bpy.data.objects[armature].pose.bones[bone]
-            pb.location = location
-            pb.scale = scale
-            pb.rotation_mode = rotation_mode
-            if rotation_mode != 'QUATERNION':
-                pb.rotation_euler = rotation
-            else:
-                pb.rotation_quaternion = rotation
-            # if custom shape doesnt exist dont try to add it to bone
-            if custom_shape in bpy.data.objects:
-                pb.custom_shape = bpy.data.objects[custom_shape]
-                pb.custom_shape_scale = custom_shape_scale
-                bpy.data.objects[armature].data.bones[bone].show_wire = True  # show wire
     
     
         # do the bone parenting at end so have all bones created
