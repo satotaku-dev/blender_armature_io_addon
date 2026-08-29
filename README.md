@@ -1,4 +1,4 @@
-Only for blender 2.82
+For Blender 2.82 only
 
-Select armature in Outliner then File->Export Armature.json
-after you can File->Import Armature.json
+Select the armature in the Outliner, then go to File → Export → Armature.json.
+After that, you can go to File → Import → Armature.json.
