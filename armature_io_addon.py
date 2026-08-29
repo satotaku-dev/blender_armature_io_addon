@@ -1,6 +1,6 @@
 bl_info = {
     "name": "Armature Import/Export",
-    "author": "Your Name",
+    "author": "satotaku-dev",
     "version": (1, 0),
     "blender": (2, 82, 0),
     "location": "File > Import/Export",
